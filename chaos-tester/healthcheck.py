@@ -1,37 +1,38 @@
-# verifica stato servizi,
-
-
-
-
 import requests
 import os
 import docker
+import redis
 
 client = docker.from_env()
 
 def check_service(service_name):
     try:
-        container = client.containers.get(service_name)
-        # Verifica healthcheck Docker
+        container = client.containers.get(f"chaos-tester_{service_name}_1")
+        
+        # Verifica stato Docker
+        status = container.status
         health = container.attrs['State'].get('Health', {}).get('Status', 'no healthcheck')
         
-        # Verifica personalizzata (es. HTTP)
+        # Verifiche personalizzate
         if service_name == "web":
-            response = requests.get("http://localhost:80/health", timeout=5)
-            return response.status_code == 200
-        elif service_name == "db":
-            # Usa un client PostgreSQL per verificare la connessione
-            import psycopg2
-            conn = psycopg2.connect(host="localhost", user="user", password="pass", dbname="db")
-            conn.close()
-            return True
+            try:
+                response = requests.get("http://localhost:5000/health", timeout=3)
+                return response.status_code == 200
+            except:
+                return False
+        elif service_name == "redis":
+            try:
+                r = redis.Redis(host='redis', port=6379, db=0)
+                return r.ping()
+            except:
+                return False
+                
         return health == "healthy"
     except Exception as e:
         return False
 
-# Esempio di utilizzo
 if __name__ == "__main__":
-    services = os.popen("docker-compose config --services").read().splitlines()
+    services = os.popen("docker-compose -p chaos-tester config --services").read().splitlines()
     for service in services:
         status = "OK" if check_service(service) else "FAIL"
         print(f"{service}: {status}")

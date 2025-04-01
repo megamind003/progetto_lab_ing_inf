@@ -15,7 +15,7 @@ file healtcheck.py :
 
  
 
- per avviare l ambiente: docker-compose up -d
+ per avviare l ambiente: docker-compose down -v && docker-compose up -d 
 
 
  ######
