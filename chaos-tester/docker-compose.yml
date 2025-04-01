@@ -1,12 +1,13 @@
 version: '3.8'
 services:
   web:
-    image: my-flask-app:latest
+    build: .  # Specifica la cartella del Dockerfile
+    image: my-flask-app:latest  # Tag dell'immagine
     ports: ["5000:5000"]
     depends_on: ["redis"]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
-      interval: 5s
+    test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+
 
   redis:
     image: redis:alpine
