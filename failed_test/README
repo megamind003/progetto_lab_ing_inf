@@ -73,3 +73,47 @@ analizza autonomamente i container, le loro interfacce e interazioni, senza cono
    - Classifica i failure in base alla gravità
 
 ---
+
+
+
+idee future:
+    Chaos Monkey (simuare interruzione random servizi)
+    Grafana + Prometheus (per ottimizzazione)
+
+
+
+boss ~/Documents/progetto_lab_ing_inf/chaos-tester/project $ cd ..
+boss ~/Documents/progetto_lab_ing_inf/chaos-tester $ tree
+.
+├── app.py
+├── chaos.sh
+├── docker-compose.yml
+├── Dockerfile
+├── healthcheck.py
+├── project
+│   ├── chaos-tester
+│   │   ├── discovery.py
+│   │   ├── docker-compose.yml
+│   │   └── shutdown_script.sh
+│   ├── dockerfiles
+│   │   ├── client
+│   │   │   ├── client_simulator.py
+│   │   │   └── Dockerfile
+│   │   ├── postgres-db
+│   │   │   └── Dockerfile
+│   │   ├── redis-cache
+│   │   │   ├── Dockerfile
+│   │   │   └── redis.conf
+│   │   └── web-server
+│   │       ├── app.py
+│   │       ├── Dockerfile
+│   │       └── requirements.txt
+│   ├── output.txt
+│   ├── print_files.sh
+│   ├── README
+│   └── run_test.sh
+├── README
+└── requirements.txt
+
+7 directories, 22 files
+boss ~/Documents/progetto_lab_ing_inf/chaos-tester $ 
