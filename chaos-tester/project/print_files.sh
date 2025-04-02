@@ -29,5 +29,7 @@ append_file_content "dockerfiles/client/client_simulator.py"
 append_file_content "chaos-tester/docker-compose.yml"
 append_file_content "chaos-tester/discovery.py"
 append_file_content "chaos-tester/shutdown_script.sh"
+append_file_content "/home/boss/Documents/progetto_lab_ing_inf/chaos-tester/project/run_test.sh"
+
 
 echo "Contenuto dei file è stato scritto in $output_file"

@@ -280,3 +280,18 @@ echo "### Redis Logs" >> $REPORT_FILE
 
 echo "Report generated at ${TIMESTAMP}" >> $REPORT_FILE
 
+File: /home/boss/Documents/progetto_lab_ing_inf/chaos-tester/project/run_test.sh
+----------------------------------------
+cd ~/Documents/progetto_lab_ing_inf/chaos-tester && docker-compose down --remove-orphans
+
+docker-compose build
+
+docker-compose up -d
+
+docker-compose ps
+
+sleep 30
+
+cd ~/Documents/progetto_lab_ing_inf/chaos-tester/project/chaos-tester && ./shutdown_script.sh 
+
+
