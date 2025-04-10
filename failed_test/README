@@ -1,0 +1,119 @@
+analizza autonomamente i container, le loro interfacce e interazioni, senza conoscere a priori lo scopo del progetto.  
+**Livello di complessità**: Alto (richiede integrazione con Docker API, analisi di rete e ML basilare).
+
+---
+
+### **1. Componenti del Sistema**
+#### **1.1 Dynamic Service Discovery**
+- **Scopo**: Identificare automaticamente le caratteristiche di ogni container:
+  - Porte esposte (TCP/UDP)
+  - Endpoint HTTP/gRPC (es. `/health`, `/metrics`)
+  - Variabili d'ambiente (es. `DB_HOST`, `API_URL`)
+  - Dipendenze da altri servizi (inferred da reti Docker e chiamate di rete)
+- **Strumenti**:
+  - `docker inspect` per estrarre configurazioni
+  - `nmap` per scansione porte
+  - **AI/ML**: Classificazione servizi (es. Redis vs PostgreSQL) tramite porte e pattern di log
+
+#### **1.2 Dependency Graph Builder**
+- **Scopo**: Costruire un grafo delle dipendenze basato su:
+  - Reti Docker in comune
+  - Chiamate HTTP tra servizi (log analysis)
+  - Utilizzo di DNS interni (es. `servizioX → db`)
+- **Output**: Grafo diretto per determinare l'ordine di testing (es. testare prima i servizi foglia)
+
+#### **1.3 Chaos Engine**
+- **Scopo**: Simulare failure in ordine strategico:
+  - **Modelli di failure**:
+    - Stop container
+    - Latenza di rete tra servizi
+    - CPU/Memory exhaustion
+  - **Priorità**: Servizi con più dipendenze → meno dipendenze
+- **Strumenti**:
+  - `docker pause/stop`
+  - `tc` (Traffic Control) per simulare latenza
+  - `stress-ng` per stressare risorse
+
+#### **1.4 State Monitor**
+- **Scopo**: Monitorare cambiamenti nello stato del sistema:
+  - Healthcheck Docker
+  - Metriche HTTP (tempo di risposta, status code)
+  - Log di errore
+  - Connessioni attive tra container (`netstat`)
+- **Strumenti**:
+  - Prometheus per metriche
+  - ELK Stack per log analysis
+
+#### **1.5 Adaptive Report Generator**
+- **Scopo**: Generare report comprensibili senza conoscere il contesto:
+  - Mappa delle dipendenze pre/post failure
+  - Impact analysis basato su metriche
+  - Classificazione errori (es. "Timeout su chiamate HTTP a servizio Y")
+
+---
+
+
+
+### **3. Workflow del Sistema**
+1. **Discovery Phase**:
+   - Analizza tutti i container in esecuzione
+   - Classifica i servizi (DB, Web Server, etc.)
+   - Costruisci il grafo delle dipendenze
+
+2. **Chaos Execution**:
+   - Simula failure seguendo l'ordine del grafo
+   - Registra metriche prima/dopo ogni test
+
+3. **Impact Analysis**:
+   - Correla failure con errori nei log
+   - Identifica servizi critici (più dipendenze)
+
+4. **Reporting**:
+   - Genera report HTML con grafo e tabelle d'impatto
+   - Classifica i failure in base alla gravità
+
+---
+
+
+
+idee future:
+    Chaos Monkey (simuare interruzione random servizi)
+    Grafana + Prometheus (per ottimizzazione)
+
+
+
+boss ~/Documents/progetto_lab_ing_inf/chaos-tester/project $ cd ..
+boss ~/Documents/progetto_lab_ing_inf/chaos-tester $ tree
+.
+├── app.py
+├── chaos.sh
+├── docker-compose.yml
+├── Dockerfile
+├── healthcheck.py
+├── project
+│   ├── chaos-tester
+│   │   ├── discovery.py
+│   │   ├── docker-compose.yml
+│   │   └── shutdown_script.sh
+│   ├── dockerfiles
+│   │   ├── client
+│   │   │   ├── client_simulator.py
+│   │   │   └── Dockerfile
+│   │   ├── postgres-db
+│   │   │   └── Dockerfile
+│   │   ├── redis-cache
+│   │   │   ├── Dockerfile
+│   │   │   └── redis.conf
+│   │   └── web-server
+│   │       ├── app.py
+│   │       ├── Dockerfile
+│   │       └── requirements.txt
+│   ├── output.txt
+│   ├── print_files.sh
+│   ├── README
+│   └── run_test.sh
+├── README
+└── requirements.txt
+
+7 directories, 22 files
+boss ~/Documents/progetto_lab_ing_inf/chaos-tester $ 

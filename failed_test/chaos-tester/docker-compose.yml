@@ -1,0 +1,71 @@
+version: '3.8'
+
+services:
+  web:
+    build: ../dockerfiles/web-server
+    ports:
+      - "8000:8000"
+    networks:
+      - chaos-net
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    volumes:
+      - web-logs:/var/log/web
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  redis:
+    build: ../dockerfiles/redis-cache
+    networks:
+      - chaos-net
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-logs:/var/log/redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+
+  postgres:
+    build: ../dockerfiles/postgres-db
+    networks:
+      - chaos-net
+    environment:
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres-logs:/var/log/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+
+  client:
+    build: ../dockerfiles/client
+    networks:
+      - chaos-net
+    depends_on:
+      - web
+    volumes:
+      - client-logs:/var/log/client
+
+networks:
+  chaos-net:
+    driver: bridge
+
+volumes:
+  web-logs:
+  redis-logs:
+  postgres-logs:
+  client-logs:

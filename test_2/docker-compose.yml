@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:13-alpine
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: mydb
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - app-network
+    ports:
+      - "5433:5432"
+
+  fastapi-app:
+    build: ./cont1
+    ports:
+      - "8000:8000"
+    environment:
+      DB_URL: postgresql+asyncpg://user:password@db:5432/mydb
+    depends_on:
+      - db
+    networks:
+      - app-network
+
+  client-app:
+    build: ./cont2
+    ports:
+      - "8001:8001"
+    depends_on:
+      - fastapi-app
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  postgres_data:

@@ -1,0 +1,400 @@
+
+File: cont1/app/__init__.py
+----------------------------------------
+
+
+
+File: cont1/app/main.py
+----------------------------------------
+from fastapi import FastAPI
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy import Column, Integer, String
+import os
+import asyncio
+from sqlalchemy.sql import select 
+
+DATABASE_URL = os.getenv("DB_URL", "postgresql+asyncpg://user:password@db:5432/mydb")
+Base = declarative_base()
+
+class Item(Base):
+    __tablename__ = "items"
+    id = Column(Integer, primary_key=True)
+    name = Column(String)
+
+engine = create_async_engine(DATABASE_URL)
+async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+app = FastAPI()
+
+@app.on_event("startup")
+async def startup():
+    await asyncio.sleep(2)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+
+@app.get("/items")
+async def get_items():
+    async with async_session() as session:
+        result = await session.execute(select(Item))
+        items = result.scalars().all()
+        return {"items": [item.name for item in items]}
+    
+    
+@app.post("/items/{name}")
+async def create_item(name: str):
+    async with async_session() as session:
+        new_item = Item(name=name)
+        session.add(new_item)
+        await session.commit()
+        return {"status": "item created"}
+
+
+File: cont1/Dockerfile
+----------------------------------------
+# Base image
+FROM python:3.10-slim
+
+# Set working directory
+WORKDIR /app
+
+# Copy requirements first to leverage Docker cache
+COPY requirements.txt .
+
+# Install dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY ./app ./app
+
+# Expose port
+EXPOSE 8000
+
+# Run the application
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+
+File: cont1/requirements.txt
+----------------------------------------
+fastapi>=0.68.0
+uvicorn>=0.15.0
+sqlalchemy>=1.4.0
+asyncpg>=0.25.0
+python-dotenv>=0.19.0
+greenlet>=2.0.0 
+
+
+File: cont2/app/main.py
+----------------------------------------
+from fastapi import FastAPI, HTTPException
+import httpx
+
+app = FastAPI()
+API_SERVICE_URL = "http://fastapi-app:8000"  # Nome del servizio dal compose
+
+@app.get("/combined")
+async def get_combined_data():
+    try:
+        async with httpx.AsyncClient() as client:
+            # Chiamata al primo container
+            response = await client.get(f"{API_SERVICE_URL}/")
+            api_data = response.json()
+            
+        return {
+            "client_message": "Data from client service",
+            "api_service_data": api_data
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/health")
+async def health_check():
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.get(f"{API_SERVICE_URL}/health")
+        return {"status": "connected", "service": "client"}
+    except:
+        return {"status": "disconnected", "service": "client"}
+
+
+File: cont2/Dockerfile
+----------------------------------------
+FROM python:3.9-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY ./app ./app
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001"]
+
+
+File: cont2/requirements.txt
+----------------------------------------
+fastapi>=0.68.0
+uvicorn>=0.15.0
+httpx>=0.23.0
+
+
+File: cont3/init.sql
+----------------------------------------
+
+
+
+File: docker-compose.yml
+----------------------------------------
+version: '3.8'
+
+services:
+  db:
+    image: postgres:13-alpine
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: mydb
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - app-network
+    ports:
+      - "5433:5432"
+
+  fastapi-app:
+    build: ./cont1
+    ports:
+      - "8000:8000"
+    environment:
+      DB_URL: postgresql+asyncpg://user:password@db:5432/mydb
+    depends_on:
+      - db
+    networks:
+      - app-network
+
+  client-app:
+    build: ./cont2
+    ports:
+      - "8001:8001"
+    depends_on:
+      - fastapi-app
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+
+
+File: docker_visualizer.py
+----------------------------------------
+# docker_visualizer.py
+import os
+import subprocess
+import docker
+import yaml
+from diagrams import Diagram, Cluster, Edge
+from diagrams.generic.device import Mobile, Client
+from diagrams.generic.database import SQL
+from diagrams.generic.network import Firewall
+from diagrams.onprem.container import Docker
+from diagrams.custom import Custom
+from diagrams.programming.framework import FastAPI
+
+class DockerVisualizer:
+    def __init__(self, project_root):
+        self.project_root = os.path.abspath(project_root)
+        self.client = docker.from_env()
+        self.services = {}
+        self.networks = {}
+        self.containers = {}
+
+    def analyze_project(self):
+        self._find_docker_components()
+        self._inspect_running_containers()
+        self._parse_compose_files()
+        self._cross_validate()
+
+    def _find_docker_components(self):
+        for root, _, files in os.walk(self.project_root):
+            for file in files:
+                if file == "Dockerfile":
+                    service_name = os.path.basename(os.path.dirname(root))
+                    self._parse_dockerfile(os.path.join(root, file), service_name)
+                elif file in ["docker-compose.yml", "docker-compose.yaml"]:
+                    self._parse_compose_file(os.path.join(root, file))
+
+    def _parse_dockerfile(self, path, service_name):
+        details = {
+            'exposed_ports': [],
+            'healthcheck': None,
+            'volumes': [],
+            'env_vars': []
+        }
+        
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith('EXPOSE'):
+                    details['exposed_ports'] = line.split()[1:]
+                elif line.startswith('HEALTHCHECK'):
+                    details['healthcheck'] = line
+                elif line.startswith('VOLUME'):
+                    details['volumes'] = line.split()[1:]
+                elif line.startswith('ENV'):
+                    details['env_vars'].append(line.split(' ', 1)[1])
+
+        self.services[service_name] = details
+
+    def _parse_compose_file(self, path):
+        with open(path) as f:
+            compose_config = yaml.safe_load(f)
+            for name, config in compose_config.get('services', {}).items():
+                self.services.setdefault(name, {}).update({
+                    'compose_ports': config.get('ports', []),
+                    'networks': config.get('networks', []),
+                    'depends_on': config.get('depends_on', []),
+                    'environment': config.get('environment', {})
+                })
+
+            self.networks.update(compose_config.get('networks', {}))
+
+    def _inspect_running_containers(self):
+        for container in self.client.containers.list(all=True):
+            inspect = container.attrs
+            service_name = self._extract_service_name(inspect['Name'])
+            
+            self.containers[service_name] = {
+                'status': inspect['State']['Status'],
+                'health': inspect['State'].get('Health', {}).get('Status', 'N/A'),
+                'ip_address': inspect['NetworkSettings']['IPAddress'],
+                'mapped_ports': list(inspect['NetworkSettings']['Ports'].keys()),
+                'image': inspect['Config']['Image']
+            }
+
+    def _extract_service_name(self, container_name):
+        return container_name.lstrip('/').split('_', 1)[1].rsplit('_', 1)[0]
+
+    def _cross_validate(self):
+        for service, details in self.services.items():
+            container_info = self.containers.get(service, {})
+            details.update({
+                'running_status': container_info.get('status', 'not_running'),
+                'actual_ports': container_info.get('mapped_ports', []),
+                'health_status': container_info.get('health', 'N/A')
+            })
+
+    def generate_diagram(self, output_format='jpeg'):
+        graph_attr = {
+            "bgcolor": "white",
+            "fontcolor": "#2D3436",
+            "fontname": "Helvetica",
+            "fontsize": "12",
+            "layout": "dot"
+        }
+
+        with Diagram("Docker Architecture", 
+                    show=False, 
+                    direction="LR",
+                    outformat=output_format,
+                    filename="docker_architecture",
+                    graph_attr=graph_attr):
+
+            external = Custom("Internet", "./resources/internet.png")
+            components = {}
+
+            with Cluster("Docker Environment"):
+                # Create all nodes first
+                for service, details in self.services.items():
+                    node_color = "#2ECC71" if details.get('running_status') == 'running' else "#E74C3C"
+                    
+                    if 'postgres' in service.lower():
+                        components[service] = SQL(service)
+                    elif 'fastapi' in service.lower():
+                        components[service] = FastAPI(service)
+                    elif 'client' in service.lower():
+                        components[service] = Client(service)
+                    else:
+                        components[service] = Docker(service)
+
+                    # Add labels with details
+                    label = [
+                        f"Status: {details['running_status'].upper()}",
+                        f"Ports: {', '.join(details['actual_ports'])}"
+                    ]
+                    
+                    if details.get('health_status', 'N/A') != 'N/A':
+                        label.append(f"Health: {details['health_status']}")
+                    
+                    components[service].label = "\n".join(label)
+                    components[service].fontcolor = node_color
+
+                # Create connections
+                for service, details in self.services.items():
+                    # Connect dependencies
+                    for dependency in details.get('depends_on', []):
+                        if dependency in components:
+                            components[dependency] >> Edge(color="#3498DB", style="dashed") >> components[service]
+
+                    # Connect to external networks
+                    for network in details.get('networks', []):
+                        net_node = Firewall(network)
+                        components[service] - Edge(color="#7F8C8D", style="dotted") - net_node
+
+                    # Connect exposed ports to external
+                    if details.get('compose_ports'):
+                        external >> Edge(color="#F1C40F") >> components[service]
+
+if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Docker Architecture Visualizer')
+    parser.add_argument('project_path', help='Path to the project root directory')
+    parser.add_argument('-f', '--format', default='jpeg', choices=['png', 'jpeg', 'pdf', 'svg'],
+                       help='Output format for the diagram')
+    
+    args = parser.parse_args()
+    
+    visualizer = DockerVisualizer(args.project_path)
+    visualizer.analyze_project()
+    visualizer.generate_diagram(args.format)
+    print(f"Diagram generated as docker_architecture.{args.format}")
+
+
+File: print_files.sh
+----------------------------------------
+#!/bin/bash
+
+# Nome del file di output
+output_file="output.txt"
+
+# Pulisci il file di output se esiste già
+> "$output_file"
+
+# Funzione per aggiungere il contenuto di un file al file di output
+append_file_content() {
+    local file_path="$1"
+    echo "" >> "$output_file"
+    echo "File: $file_path" >> "$output_file"
+    echo "----------------------------------------" >> "$output_file"
+    cat "$file_path" >> "$output_file"
+    echo "" >> "$output_file"
+    echo "" >> "$output_file"
+}
+
+# Esporta il contenuto di tutti i file nella struttura di directory
+append_file_content "cont1/app/__init__.py"
+append_file_content "cont1/app/main.py"
+append_file_content "cont1/Dockerfile"
+append_file_content "cont1/requirements.txt"
+append_file_content "cont2/app/main.py"
+append_file_content "cont2/Dockerfile"
+append_file_content "cont2/requirements.txt"
+append_file_content "cont3/init.sql"
+append_file_content "docker-compose.yml"
+append_file_content "docker_visualizer.py"
+append_file_content "print_files.sh"
+
+echo "Contenuto dei file è stato scritto in $output_file"
+
+

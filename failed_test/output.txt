@@ -1,0 +1,289 @@
+File: dockerfiles/web-server/Dockerfile
+----------------------------------------
+FROM python:3.9-slim
+
+# Installa curl per gli healthcheck
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY app.py .
+
+EXPOSE 8000
+ENV FLASK_APP=app.py
+ENV REDIS_HOST=redis
+ENV REDIS_PORT=6379
+RUN mkdir -p /var/log/web-server && chmod 777 /var/log/web-server
+
+CMD ["flask", "run", "--host=0.0.0.0", "--port=8000"]
+
+File: dockerfiles/web-server/app.py
+----------------------------------------
+from flask import Flask, jsonify
+import redis
+import logging
+
+app = Flask(__name__)
+logging.basicConfig(filename='/var/log/web/server.log', level=logging.INFO)
+
+@app.route('/health')
+def health():
+    app.logger.info('Health check requested')
+    return jsonify({"status": "OK"}), 200
+
+@app.route('/data')
+def get_data():
+    try:
+        r = redis.Redis(host=app.config.get('REDIS_HOST', 'redis'),
+                        port=app.config.get('REDIS_PORT', 6379),
+                        socket_connect_timeout=2)
+        return jsonify({"response": str(r.ping())}), 200
+    except Exception as e:
+        app.logger.error(f"Redis error: {str(e)}")
+        return jsonify({"error": str(e)}), 503
+
+File: dockerfiles/web-server/requirements.txt
+----------------------------------------
+Flask==3.0.2
+redis==5.0.1
+
+File: dockerfiles/redis-cache/Dockerfile
+----------------------------------------
+FROM redis:alpine
+
+COPY redis.conf /usr/local/etc/redis/redis.conf
+RUN mkdir -p /var/log/redis && chmod 777 /var/log/redis
+CMD ["redis-server", "/usr/local/etc/redis/redis.conf"]
+
+File: dockerfiles/redis-cache/redis.conf
+----------------------------------------
+logfile /var/log/redis/access.log
+
+File: dockerfiles/postgres-db/Dockerfile
+----------------------------------------
+FROM postgres:14
+
+ENV POSTGRES_USER=postgres
+ENV POSTGRES_PASSWORD=postgres
+RUN mkdir -p /var/log/postgres && chmod 777 /var/log/postgres
+
+
+File: dockerfiles/client/Dockerfile
+----------------------------------------
+FROM python:3.9-slim
+
+WORKDIR /app
+COPY client_simulator.py .
+RUN pip install requests  && mkdir -p /var/log/client && chmod 777 /var/log/client
+CMD ["python", "client_simulator.py"]
+
+File: dockerfiles/client/client_simulator.py
+----------------------------------------
+import requests
+import time
+import logging
+
+# Configurazione logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('/var/log/client/client.log'),
+        logging.StreamHandler()
+    ]
+)
+
+def simulate_traffic():
+    while True:
+        try:
+            start_time = time.time()
+            
+            # Effettua richiesta al web server
+            response = requests.get(
+                "http://web:8000/data",
+                timeout=2
+            )
+            
+            duration = (time.time() - start_time) * 1000  # ms
+            
+            logging.info(
+                f"Response: {response.status_code} | "
+                f"Content: {response.text.strip()} | "
+                f"Latency: {duration:.2f}ms"
+            )
+
+        except requests.exceptions.ConnectionError:
+            logging.error("Connection refused: Web server unreachable")
+            
+        except requests.exceptions.Timeout:
+            logging.warning("Request timed out: Server did not respond within 2s")
+            
+        except Exception as e:
+            logging.error(f"Unexpected error: {str(e)}")
+
+        time.sleep(5)
+
+if __name__ == "__main__":
+    logging.info("Starting client simulator...")
+    simulate_traffic()
+
+File: chaos-tester/docker-compose.yml
+----------------------------------------
+version: '3.8'
+
+services:
+  web:
+    build: ../dockerfiles/web-server
+    ports:
+      - "8000:8000"
+    networks:
+      - chaos-net
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    volumes:
+      - web-logs:/var/log/web
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  redis:
+    build: ../dockerfiles/redis-cache
+    networks:
+      - chaos-net
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-logs:/var/log/redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+
+  postgres:
+    build: ../dockerfiles/postgres-db
+    networks:
+      - chaos-net
+    environment:
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres-logs:/var/log/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+
+  client:
+    build: ../dockerfiles/client
+    networks:
+      - chaos-net
+    depends_on:
+      - web
+    volumes:
+      - client-logs:/var/log/client
+
+networks:
+  chaos-net:
+    driver: bridge
+
+volumes:
+  web-logs:
+  redis-logs:
+  postgres-logs:
+  client-logs:
+
+File: chaos-tester/discovery.py
+----------------------------------------
+import docker
+import requests
+import json
+
+client = docker.from_env()
+
+def get_container_info(container):
+    info = {
+        "id": container.id,
+        "name": container.name,
+        "status": container.status,
+        "ports": container.attrs['NetworkSettings']['Ports'],
+        "env": container.attrs['Config']['Env'],
+        "endpoints": [],
+        "dependencies": []
+    }
+
+    # Rileva endpoint HTTP
+    if '8000/tcp' in info['ports']:
+        try:
+            port = info['ports']['8000/tcp'][0]['HostPort']
+            response = requests.get(f"http://localhost:{port}/health", timeout=2)
+            if response.status_code == 200:
+                info['endpoints'].append('/health')
+        except:
+            pass
+
+    # Rileva dipendenze di rete
+    networks = container.attrs['NetworkSettings']['Networks']
+    for network in networks.values():
+        info['dependencies'] += [c.split('.')[0] for c in network['Aliases'] if c != container.name]
+
+    return info
+
+def main():
+    containers = client.containers.list()
+    report = {}
+    
+    for container in containers:
+        report[container.name] = get_container_info(container)
+    
+    with open('traffic_logs/container_report.json', 'w') as f:
+        json.dump(report, f, indent=2)
+
+if __name__ == "__main__":
+    main()
+
+File: chaos-tester/shutdown_script.sh
+----------------------------------------
+#!/bin/bash
+
+# Esegui l'analisi
+python discovery.py
+
+# Ferma tutti i container
+docker-compose down -v
+
+# Genera report finale
+TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+REPORT_FILE="traffic_logs/final_report_${TIMESTAMP}.md"
+
+echo "# Final System Report" > $REPORT_FILE
+echo "## Container Analysis" >> $REPORT_FILE
+echo '```json' >> $REPORT_FILE
+cat traffic_logs/container_report.json >> $REPORT_FILE
+echo '```' >> $REPORT_FILE
+
+echo "## Log Summary" >> $REPORT_FILE
+# Modifica queste righe
+echo "### Web Server Logs" >> $REPORT_FILE
+[ -f traffic_logs/web/server.log ] && tail -n 10 traffic_logs/web/server.log >> $REPORT_FILE || echo "No web logs" >> $REPORT_FILE
+
+echo "### Redis Logs" >> $REPORT_FILE
+[ -f traffic_logs/redis/access.log ] && tail -n 10 traffic_logs/redis/access.log >> $REPORT_FILE || echo "No redis logs" >> $REPORT_FILE
+
+
+echo "Report generated at ${TIMESTAMP}" >> $REPORT_FILE
+
+File: /home/boss/Documents/progetto_lab_ing_inf/chaos-tester/project/run_test.sh
+----------------------------------------
+
+
